@@ -1,78 +1,150 @@
+import streamlit as st
 import pandas as pd
-import re
-from datetime import datetime
+import matplotlib.pyplot as plt
+import openai
+import base64
+from io import BytesIO
+from triage import classify_incidents, map_to_mitre_tags
+from triage_advanced import parse_logs, enrich_entities, classify_with_gpt, correlate_incidents
 
-# ─────────────────────────────────────────────
-# 1. Parse raw log lines into a DataFrame
-# ─────────────────────────────────────────────
-def parse_logs(raw_text):
-    lines = raw_text.strip().splitlines()
-    data = []
+# Load API Key from Streamlit secrets
+openai.api_key = st.secrets.get("OPENAI_API_KEY")
 
-    for line in lines:
-        match = re.match(r"(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}) - (.+)", line)
-        if match:
-            timestamp_str, message = match.groups()
-            try:
-                timestamp = datetime.strptime(timestamp_str, "%Y-%m-%d %H:%M:%S")
-            except ValueError:
-                timestamp = None
-            data.append({"timestamp": timestamp, "description": message})
+# App Config
+st.set_page_config(page_title="AI Incident Triage Bot", layout="wide")
+st.title("🛡️ AI Incident Triage Bot")
+
+# Optional Dark Mode
+if st.toggle("🌙 Enable Dark Mode", value=True):
+    st.markdown("<style>body { background-color: #0e1117; color: white; }</style>", unsafe_allow_html=True)
+
+# GPT-4 Root Cause Summary
+def summarize_incident(text):
+    response = openai.ChatCompletion.create(
+        model="gpt-4",
+        messages=[
+            {"role": "system", "content": "You are a cybersecurity analyst. Summarize root cause and recommend action."},
+            {"role": "user", "content": f"Incident: {text}"}
+        ],
+        temperature=0.3
+    )
+    return response["choices"][0]["message"]["content"]
+
+# Example Logs
+def load_example_logs():
+    return """
+    2025-07-01 12:45:23 - Login failure from IP 192.168.0.12
+    2025-07-01 12:45:30 - Suspicious file accessed on host-223
+    2025-07-01 12:46:10 - Admin access granted to user 'temp01'
+    2025-07-01 12:48:02 - Malware signature detected in process xyz.exe
+    """
+
+# Export Helpers
+def generate_markdown(df):
+    return df.to_markdown(index=False)
+
+def generate_pdf(df):
+    from fpdf import FPDF
+    pdf = FPDF()
+    pdf.add_page()
+    pdf.set_font("Arial", size=10)
+    for i, row in df.iterrows():
+        text = f"{row['timestamp']} | {row['severity']} | {row['description']}"
+        pdf.multi_cell(0, 10, text)
+    buffer = BytesIO()
+    pdf.output(buffer)
+    return buffer.getvalue()
+
+def generate_ticket_json(row):
+    return {
+        "summary": f"[{row['severity']}] {row['description'][:60]}...",
+        "details": {
+            "timestamp": row["timestamp"],
+            "category": row.get("threat_category", "Unknown"),
+            "description": row["description"],
+            "gpt_summary": summarize_incident(row["description"]),
+            "campaign": row.get("campaign", "Unlinked")
+        },
+        "priority": row["severity"].lower(),
+        "status": "open"
+    }
+
+def plot_mitre_matrix(df):
+    tactics = df["threat_category"].value_counts()
+    fig, ax = plt.subplots(figsize=(8, 4))
+    ax.barh(tactics.index, tactics.values)
+    ax.set_title("🧩 MITRE ATT&CK Tactic Frequency")
+    st.pyplot(fig)
+
+# ─────────────────────── FILE UPLOAD ───────────────────────
+uploaded_file = st.file_uploader("📂 Upload a log file (.txt or .csv)", type=["txt", "csv"])
+use_example = st.checkbox("🔍 Use example logs instead")
+
+if uploaded_file or use_example:
+    logs = uploaded_file.read().decode("utf-8") if uploaded_file else load_example_logs()
+
+    llm_mode = st.toggle("🧠 Enable GPT-4 Classification", value=False)
+    with st.spinner("🔍 Processing logs..."):
+        df = parse_logs(logs)
+        df = enrich_entities(df)
+
+        if llm_mode:
+            df = classify_with_gpt(df)
         else:
-            data.append({"timestamp": None, "description": line})
+            df = classify_incidents(df)
+            df["threat_category"] = df["description"].apply(map_to_mitre_tags)
 
-    return pd.DataFrame(data)
+        df = correlate_incidents(df)
 
-# ─────────────────────────────────────────────
-# 2. Enrich incidents with IPs, hosts, etc.
-# ─────────────────────────────────────────────
-def enrich_incidents(df):
-    df["source_ip"] = df["description"].apply(lambda x: extract_ip(x))
-    df["host"] = df["description"].apply(lambda x: extract_hostname(x))
-    return df
+    # ─────────────────────── FILTERS ───────────────────────
+    st.subheader("📊 Triaged Incidents")
+    col1, col2 = st.columns(2)
+    with col1:
+        severity_filter = st.multiselect("Filter by severity", df["severity"].unique().tolist())
+    with col2:
+        search_term = st.text_input("🔎 Search logs")
 
-def extract_ip(text):
-    match = re.search(r"\b(?:[0-9]{1,3}\.){3}[0-9]{1,3}\b", text)
-    return match.group(0) if match else None
+    filtered = df.copy()
+    if severity_filter:
+        filtered = filtered[filtered["severity"].isin(severity_filter)]
+    if search_term:
+        filtered = filtered[filtered.apply(lambda row: search_term.lower() in str(row).lower(), axis=1)]
 
-def extract_hostname(text):
-    match = re.search(r"host[-_]?\w+", text, re.IGNORECASE)
-    return match.group(0) if match else None
+    st.dataframe(filtered, use_container_width=True)
 
-# ─────────────────────────────────────────────
-# 3. Classify severity using rule-based keywords
-# ─────────────────────────────────────────────
-def classify_incidents(df):
-    def classify(desc):
-        d = desc.lower()
-        if any(keyword in d for keyword in ["malware", "ransom", "unauthorized", "admin access"]):
-            return "Critical"
-        elif any(keyword in d for keyword in ["suspicious", "login failure", "brute force"]):
-            return "High"
-        elif any(keyword in d for keyword in ["scan", "probing", "abnormal"]):
-            return "Medium"
-        else:
-            return "Low"
-    df["severity"] = df["description"].apply(classify)
-    return df
+    # ─────────────────────── CHARTS ───────────────────────
+    if "severity" in filtered.columns:
+        st.subheader("🔥 Severity Breakdown")
+        counts = filtered["severity"].value_counts()
+        fig, ax = plt.subplots()
+        ax.pie(counts, labels=counts.index, autopct="%1.1f%%")
+        ax.axis("equal")
+        st.pyplot(fig)
 
-# ─────────────────────────────────────────────
-# 4. Map descriptions to MITRE ATT&CK tactics
-# ─────────────────────────────────────────────
-def map_to_mitre_tags(description):
-    """Simple rule-based mapping of log text to MITRE ATT&CK tactics."""
-    desc = description.lower()
-    if "login failure" in desc or "brute" in desc:
-        return "Credential Access"
-    elif "malware" in desc or "trojan" in desc:
-        return "Execution"
-    elif "unauthorized access" in desc or "admin" in desc:
-        return "Privilege Escalation"
-    elif "exfiltration" in desc or "file accessed" in desc:
-        return "Collection"
-    elif "scan" in desc or "discovery" in desc:
-        return "Discovery"
-    elif "command and control" in desc or "c2" in desc:
-        return "Command and Control"
-    else:
-        return "Unknown"
+    if "threat_category" in filtered.columns:
+        st.subheader("🧩 MITRE ATT&CK Matrix")
+        plot_mitre_matrix(filtered)
+
+    # ─────────────────────── ENTITY VIEW ───────────────────────
+    st.subheader("🕵️ Extracted Entities & Campaign Correlation")
+    st.dataframe(filtered[["timestamp", "description", "entities", "campaign"]])
+
+    # ─────────────────────── EXPORTS ───────────────────────
+    st.subheader("📤 Export")
+    col1, col2 = st.columns(2)
+    col1.download_button("📄 Export Markdown", generate_markdown(filtered).encode(), file_name="incidents.md")
+    col2.download_button("🧾 Export PDF", generate_pdf(filtered), file_name="incidents.pdf", mime="application/pdf")
+
+    # ─────────────────────── GPT SUMMARIES ───────────────────────
+    st.subheader("🧠 GPT-4 Summaries")
+    for i, row in filtered.iterrows():
+        with st.expander(f"{row['description']}"):
+            st.info(f"Threat: {row.get('threat_category', 'Unknown')} | Campaign: {row.get('campaign', '-')}")
+            summary = summarize_incident(row["description"])
+            st.text_area("Root Cause Summary", summary, height=150)
+
+    # ─────────────────────── TICKET GENERATOR ───────────────────────
+    st.subheader("🎟 Incident Ticket Generator")
+    selected = st.selectbox("Select Incident", filtered["description"].tolist())
+    row_data = filtered[filtered["description"] == selected].iloc[0]
+    st.json(generate_ticket_json(row_data))
