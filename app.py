@@ -6,13 +6,11 @@ from io import BytesIO
 from triage import classify_incidents, map_to_mitre_tags
 from triage_advanced import parse_logs, enrich_entities, classify_with_gpt, correlate_incidents
 
+# Load API key from .streamlit/secrets.toml
 openai.api_key = st.secrets.get("OPENAI_API_KEY")
 
 st.set_page_config(page_title="AI Incident Triage Bot", layout="wide")
 st.title("🛡️ AI Incident Triage Bot")
-
-if st.toggle("🌙 Enable Dark Mode", value=True):
-    st.markdown("<style>body { background-color: #0e1117; color: white; }</style>", unsafe_allow_html=True)
 
 def summarize_incident(text):
     return "This is a placeholder summary. GPT-4 integration active."
@@ -60,12 +58,13 @@ def plot_mitre_matrix(df):
     ax.set_title("MITRE ATT&CK Tactic Frequency")
     st.pyplot(fig)
 
+# Upload section
 uploaded_file = st.file_uploader("📂 Upload log file (.txt or .csv)", type=["txt", "csv"])
 use_example = st.checkbox("Use example logs")
 
 if uploaded_file or use_example:
     logs = uploaded_file.read().decode("utf-8") if uploaded_file else load_example_logs()
-    llm_mode = st.toggle("🧠 Enable GPT-4 Classification", value=False)
+    llm_mode = st.checkbox("🧠 Enable GPT-4 Classification")
 
     with st.spinner("Processing logs..."):
         df = parse_logs(logs)
@@ -79,6 +78,7 @@ if uploaded_file or use_example:
 
         df = correlate_incidents(df)
 
+    # Filters
     st.subheader("📊 Triaged Incidents")
     col1, col2 = st.columns(2)
     with col1:
@@ -94,6 +94,7 @@ if uploaded_file or use_example:
 
     st.dataframe(filtered, use_container_width=True)
 
+    # Charts
     if "severity" in filtered.columns:
         st.subheader("🔥 Severity Breakdown")
         counts = filtered["severity"].value_counts()
@@ -106,14 +107,17 @@ if uploaded_file or use_example:
         st.subheader("🧩 MITRE ATT&CK Matrix")
         plot_mitre_matrix(filtered)
 
+    # Entity & Campaign View
     st.subheader("🕵️ Extracted Entities & Campaigns")
     st.dataframe(filtered[["timestamp", "description", "entities", "campaign"]])
 
+    # Export
     st.subheader("📤 Export")
     col1, col2 = st.columns(2)
     col1.download_button("📄 Export Markdown", generate_markdown(filtered).encode(), file_name="incidents.md")
     col2.download_button("🧾 Export PDF", generate_pdf(filtered), file_name="incidents.pdf", mime="application/pdf")
 
+    # GPT summaries
     st.subheader("🧠 GPT Summaries")
     for i, row in filtered.iterrows():
         with st.expander(f"{row['description']}"):
@@ -121,6 +125,7 @@ if uploaded_file or use_example:
             summary = summarize_incident(row["description"])
             st.text_area("Summary", summary, height=120, key=f"summary_{i}")
 
+    # Ticket generator
     st.subheader("🎟 Incident Ticket Generator")
     selected = st.selectbox("Select Incident", filtered["description"].tolist())
     row_data = filtered[filtered["description"] == selected].iloc[0]
