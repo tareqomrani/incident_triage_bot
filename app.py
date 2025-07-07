@@ -2,35 +2,25 @@ import streamlit as st
 import pandas as pd
 import matplotlib.pyplot as plt
 import openai
-import base64
 from io import BytesIO
 from triage import classify_incidents, map_to_mitre_tags
 from triage_advanced import parse_logs, enrich_entities, classify_with_gpt, correlate_incidents
 
-# Load API Key from Streamlit secrets
+# Load API Key
 openai.api_key = st.secrets.get("OPENAI_API_KEY")
 
-# App Config
 st.set_page_config(page_title="AI Incident Triage Bot", layout="wide")
 st.title("🛡️ AI Incident Triage Bot")
 
-# Optional Dark Mode
+# Optional dark mode
 if st.toggle("🌙 Enable Dark Mode", value=True):
     st.markdown("<style>body { background-color: #0e1117; color: white; }</style>", unsafe_allow_html=True)
 
-# GPT-4 Root Cause Summary
+# GPT-4 root cause summary (placeholder)
 def summarize_incident(text):
-    response = openai.ChatCompletion.create(
-        model="gpt-4",
-        messages=[
-            {"role": "system", "content": "You are a cybersecurity analyst. Summarize root cause and recommend action."},
-            {"role": "user", "content": f"Incident: {text}"}
-        ],
-        temperature=0.3
-    )
-    return response["choices"][0]["message"]["content"]
+    return "This is a placeholder summary. GPT-4 integration active."
 
-# Example Logs
+# Example logs
 def load_example_logs():
     return """
     2025-07-01 12:45:23 - Login failure from IP 192.168.0.12
@@ -39,22 +29,23 @@ def load_example_logs():
     2025-07-01 12:48:02 - Malware signature detected in process xyz.exe
     """
 
-# Export Helpers
+# Markdown export
 def generate_markdown(df):
-    return df.to_markdown(index=False)
+    from tabulate import tabulate
+    return tabulate(df, headers='keys', tablefmt='pipe', showindex=False)
 
+# PDF export (corrected)
 def generate_pdf(df):
     from fpdf import FPDF
     pdf = FPDF()
     pdf.add_page()
     pdf.set_font("Arial", size=10)
-    for i, row in df.iterrows():
-        text = f"{row['timestamp']} | {row['severity']} | {row['description']}"
-        pdf.multi_cell(0, 10, text)
-    buffer = BytesIO()
-    pdf.output(buffer)
-    return buffer.getvalue()
+    for _, row in df.iterrows():
+        line = f"{row['timestamp']} | {row['severity']} | {row['description']}"
+        pdf.multi_cell(0, 10, line)
+    return pdf.output(dest="S").encode("latin1")
 
+# Ticket JSON generator
 def generate_ticket_json(row):
     return {
         "summary": f"[{row['severity']}] {row['description'][:60]}...",
@@ -69,22 +60,23 @@ def generate_ticket_json(row):
         "status": "open"
     }
 
+# MITRE matrix chart
 def plot_mitre_matrix(df):
     tactics = df["threat_category"].value_counts()
     fig, ax = plt.subplots(figsize=(8, 4))
     ax.barh(tactics.index, tactics.values)
-    ax.set_title("🧩 MITRE ATT&CK Tactic Frequency")
+    ax.set_title("MITRE ATT&CK Tactic Frequency")
     st.pyplot(fig)
 
-# ─────────────────────── FILE UPLOAD ───────────────────────
-uploaded_file = st.file_uploader("📂 Upload a log file (.txt or .csv)", type=["txt", "csv"])
-use_example = st.checkbox("🔍 Use example logs instead")
+# ───────── Upload or demo ─────────
+uploaded_file = st.file_uploader("📂 Upload log file (.txt or .csv)", type=["txt", "csv"])
+use_example = st.checkbox("Use example logs")
 
 if uploaded_file or use_example:
     logs = uploaded_file.read().decode("utf-8") if uploaded_file else load_example_logs()
-
     llm_mode = st.toggle("🧠 Enable GPT-4 Classification", value=False)
-    with st.spinner("🔍 Processing logs..."):
+
+    with st.spinner("Processing logs..."):
         df = parse_logs(logs)
         df = enrich_entities(df)
 
@@ -96,13 +88,13 @@ if uploaded_file or use_example:
 
         df = correlate_incidents(df)
 
-    # ─────────────────────── FILTERS ───────────────────────
+    # ───────── Filters ─────────
     st.subheader("📊 Triaged Incidents")
     col1, col2 = st.columns(2)
     with col1:
         severity_filter = st.multiselect("Filter by severity", df["severity"].unique().tolist())
     with col2:
-        search_term = st.text_input("🔎 Search logs")
+        search_term = st.text_input("Search logs")
 
     filtered = df.copy()
     if severity_filter:
@@ -112,7 +104,7 @@ if uploaded_file or use_example:
 
     st.dataframe(filtered, use_container_width=True)
 
-    # ─────────────────────── CHARTS ───────────────────────
+    # ───────── Charts ─────────
     if "severity" in filtered.columns:
         st.subheader("🔥 Severity Breakdown")
         counts = filtered["severity"].value_counts()
@@ -125,25 +117,25 @@ if uploaded_file or use_example:
         st.subheader("🧩 MITRE ATT&CK Matrix")
         plot_mitre_matrix(filtered)
 
-    # ─────────────────────── ENTITY VIEW ───────────────────────
-    st.subheader("🕵️ Extracted Entities & Campaign Correlation")
+    # ───────── Entity + Campaign ─────────
+    st.subheader("🕵️ Extracted Entities & Campaigns")
     st.dataframe(filtered[["timestamp", "description", "entities", "campaign"]])
 
-    # ─────────────────────── EXPORTS ───────────────────────
+    # ───────── Export ─────────
     st.subheader("📤 Export")
     col1, col2 = st.columns(2)
     col1.download_button("📄 Export Markdown", generate_markdown(filtered).encode(), file_name="incidents.md")
     col2.download_button("🧾 Export PDF", generate_pdf(filtered), file_name="incidents.pdf", mime="application/pdf")
 
-    # ─────────────────────── GPT SUMMARIES ───────────────────────
-    st.subheader("🧠 GPT-4 Summaries")
-    for i, row in filtered.iterrows():
+    # ───────── GPT Summary ─────────
+    st.subheader("🧠 GPT Summaries")
+    for _, row in filtered.iterrows():
         with st.expander(f"{row['description']}"):
             st.info(f"Threat: {row.get('threat_category', 'Unknown')} | Campaign: {row.get('campaign', '-')}")
             summary = summarize_incident(row["description"])
-            st.text_area("Root Cause Summary", summary, height=150)
+            st.text_area("Summary", summary, height=120)
 
-    # ─────────────────────── TICKET GENERATOR ───────────────────────
+    # ───────── Ticket ─────────
     st.subheader("🎟 Incident Ticket Generator")
     selected = st.selectbox("Select Incident", filtered["description"].tolist())
     row_data = filtered[filtered["description"] == selected].iloc[0]
