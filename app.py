@@ -1,3 +1,4 @@
+
 import streamlit as st
 import pandas as pd
 import matplotlib.pyplot as plt
@@ -12,7 +13,6 @@ openai.api_key = st.secrets.get("OPENAI_API_KEY")
 st.set_page_config(page_title="AI Incident Triage Bot", layout="wide")
 st.title("🛡️ AI Incident Triage Bot")
 
-# Updated summary function with conditional GPT flag
 def summarize_incident(text, gpt_enabled=False):
     if gpt_enabled:
         return "This is a placeholder summary. GPT-4 integration active."
@@ -65,13 +65,13 @@ def plot_mitre_matrix(df):
 uploaded_file = st.file_uploader("📂 Upload log file (.txt or .csv)", type=["txt", "csv"])
 use_example = st.checkbox("Use example logs")
 
+if "use_gpt" not in st.session_state:
+    st.session_state.use_gpt = False
+use_gpt = st.checkbox("🧠 Enable GPT-4 Classification", value=st.session_state.use_gpt)
+st.session_state.use_gpt = use_gpt
+
 if uploaded_file or use_example:
     logs = uploaded_file.read().decode("utf-8") if uploaded_file else load_example_logs()
-
-    # ✅ Force GPT toggle OFF by default, even across reruns
-    if "use_gpt" not in st.session_state:
-        st.session_state.use_gpt = False
-    use_gpt = st.checkbox("🧠 Enable GPT-4 Classification", value=st.session_state.use_gpt)
 
     with st.spinner("Processing logs..."):
         df = parse_logs(logs)
