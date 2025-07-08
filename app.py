@@ -7,17 +7,28 @@ from io import BytesIO
 from triage import classify_incidents, map_to_mitre_tags
 from triage_advanced import parse_logs, enrich_entities, classify_with_gpt, correlate_incidents
 
-# Load OpenAI key
+# Load OpenAI API key securely
 openai.api_key = st.secrets.get("OPENAI_API_KEY")
 
 st.set_page_config(page_title="AI Incident Triage Bot", layout="wide")
 st.title("🛡️ AI Incident Triage Bot")
 
 def summarize_incident(text, gpt_enabled=False):
-    if gpt_enabled:
-        return "This is a placeholder summary. GPT-4 integration active."
-    else:
+    if not gpt_enabled:
         return "GPT-4 classification is disabled."
+    try:
+        response = openai.ChatCompletion.create(
+            model="gpt-4",
+            messages=[
+                {"role": "system", "content": "You are a cybersecurity analyst summarizing threat incidents."},
+                {"role": "user", "content": f"Summarize this incident: {text}"}
+            ],
+            temperature=0.3,
+            max_tokens=150
+        )
+        return response.choices[0].message["content"].strip()
+    except Exception as e:
+        return f"Error during GPT-4 call: {str(e)}"
 
 def load_example_logs():
     return """
@@ -45,7 +56,7 @@ def generate_ticket_json(row, gpt_enabled=False):
     return {
         "summary": f"[{row['severity']}] {row['description'][:60]}...",
         "details": {
-            "timestamp": row["timestamp"],
+            "timestamp": str(row["timestamp"]),
             "category": row.get("threat_category", "Unknown"),
             "description": row["description"],
             "gpt_summary": summarize_incident(row["description"], gpt_enabled),
@@ -131,3 +142,4 @@ if uploaded_file or use_example:
     selected = st.selectbox("Select Incident", filtered["description"].tolist())
     row_data = filtered[filtered["description"] == selected].iloc[0]
     st.json(generate_ticket_json(row_data, use_gpt))
+
