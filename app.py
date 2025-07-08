@@ -12,8 +12,12 @@ openai.api_key = st.secrets.get("OPENAI_API_KEY")
 st.set_page_config(page_title="AI Incident Triage Bot", layout="wide")
 st.title("🛡️ AI Incident Triage Bot")
 
-def summarize_incident(text):
-    return "This is a placeholder summary. GPT-4 integration active."
+# Updated summary function with conditional GPT flag
+def summarize_incident(text, gpt_enabled=False):
+    if gpt_enabled:
+        return "This is a placeholder summary. GPT-4 integration active."
+    else:
+        return "GPT-4 classification is disabled."
 
 def load_example_logs():
     return """
@@ -37,14 +41,14 @@ def generate_pdf(df):
         pdf.multi_cell(0, 10, line)
     return pdf.output(dest="S").encode("latin1")
 
-def generate_ticket_json(row):
+def generate_ticket_json(row, gpt_enabled=False):
     return {
         "summary": f"[{row['severity']}] {row['description'][:60]}...",
         "details": {
             "timestamp": row["timestamp"],
             "category": row.get("threat_category", "Unknown"),
             "description": row["description"],
-            "gpt_summary": summarize_incident(row["description"]),
+            "gpt_summary": summarize_incident(row["description"], gpt_enabled),
             "campaign": row.get("campaign", "Unlinked")
         },
         "priority": row["severity"].lower(),
@@ -64,7 +68,7 @@ use_example = st.checkbox("Use example logs")
 if uploaded_file or use_example:
     logs = uploaded_file.read().decode("utf-8") if uploaded_file else load_example_logs()
 
-    # ✅ FORCE GPT-4 OFF on first run
+    # ✅ Force GPT toggle OFF by default, even across reruns
     if "use_gpt" not in st.session_state:
         st.session_state.use_gpt = False
     use_gpt = st.checkbox("🧠 Enable GPT-4 Classification", value=st.session_state.use_gpt)
@@ -120,10 +124,10 @@ if uploaded_file or use_example:
     for i, row in filtered.iterrows():
         with st.expander(f"{row['description']}"):
             st.info(f"Threat: {row.get('threat_category', 'Unknown')} | Campaign: {row.get('campaign', '-')}")
-            summary = summarize_incident(row["description"])
+            summary = summarize_incident(row["description"], use_gpt)
             st.text_area("Summary", summary, height=120, key=f"summary_{i}")
 
     st.subheader("🎟 Incident Ticket Generator")
     selected = st.selectbox("Select Incident", filtered["description"].tolist())
     row_data = filtered[filtered["description"] == selected].iloc[0]
-    st.json(generate_ticket_json(row_data))
+    st.json(generate_ticket_json(row_data, use_gpt))
