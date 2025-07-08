@@ -1,4 +1,6 @@
-
+<p align="center">
+  <img src="CFD8356C-2B2A-4038-9B07-62F0B38BEBE9.png" alt="AI Incident Triage Bot" style="max-width: 100%;">
+</p>
 # Incident Triage Bot  
 An AI-powered assistant that automates the first-response triage process for cybersecurity incidents, helping analysts rapidly classify and prioritize alerts.
 
