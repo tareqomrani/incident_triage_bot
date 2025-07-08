@@ -1,4 +1,4 @@
- import streamlit as st
+import streamlit as st
 import pandas as pd
 import matplotlib.pyplot as plt
 import openai
@@ -58,14 +58,13 @@ def plot_mitre_matrix(df):
     ax.set_title("MITRE ATT&CK Tactic Frequency")
     st.pyplot(fig)
 
-# Upload or use example
 uploaded_file = st.file_uploader("📂 Upload log file (.txt or .csv)", type=["txt", "csv"])
 use_example = st.checkbox("Use example logs")
 
 if uploaded_file or use_example:
     logs = uploaded_file.read().decode("utf-8") if uploaded_file else load_example_logs()
 
-    # ✅ GPT-4 toggle defaulted to OFF
+    # ✅ Default GPT-4 toggle OFF
     use_gpt = st.checkbox("🧠 Enable GPT-4 Classification", value=False)
 
     with st.spinner("Processing logs..."):
@@ -80,7 +79,6 @@ if uploaded_file or use_example:
 
         df = correlate_incidents(df)
 
-    # Filter + Search
     st.subheader("📊 Triaged Incidents")
     col1, col2 = st.columns(2)
     with col1:
@@ -96,7 +94,6 @@ if uploaded_file or use_example:
 
     st.dataframe(filtered, use_container_width=True)
 
-    # Charts
     if "severity" in filtered.columns:
         st.subheader("🔥 Severity Breakdown")
         counts = filtered["severity"].value_counts()
@@ -109,17 +106,14 @@ if uploaded_file or use_example:
         st.subheader("🧩 MITRE ATT&CK Matrix")
         plot_mitre_matrix(filtered)
 
-    # Entities
     st.subheader("🕵️ Extracted Entities & Campaigns")
     st.dataframe(filtered[["timestamp", "description", "entities", "campaign"]])
 
-    # Export
     st.subheader("📤 Export")
     col1, col2 = st.columns(2)
     col1.download_button("📄 Export Markdown", generate_markdown(filtered).encode(), file_name="incidents.md")
     col2.download_button("🧾 Export PDF", generate_pdf(filtered), file_name="incidents.pdf", mime="application/pdf")
 
-    # GPT Summaries
     st.subheader("🧠 GPT Summaries")
     for i, row in filtered.iterrows():
         with st.expander(f"{row['description']}"):
@@ -127,7 +121,6 @@ if uploaded_file or use_example:
             summary = summarize_incident(row["description"])
             st.text_area("Summary", summary, height=120, key=f"summary_{i}")
 
-    # Ticket builder
     st.subheader("🎟 Incident Ticket Generator")
     selected = st.selectbox("Select Incident", filtered["description"].tolist())
     row_data = filtered[filtered["description"] == selected].iloc[0]
