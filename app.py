@@ -64,8 +64,10 @@ use_example = st.checkbox("Use example logs")
 if uploaded_file or use_example:
     logs = uploaded_file.read().decode("utf-8") if uploaded_file else load_example_logs()
 
-    # ✅ Default GPT-4 toggle OFF
-    use_gpt = st.checkbox("🧠 Enable GPT-4 Classification", value=False)
+    # ✅ FORCE GPT-4 OFF on first run
+    if "use_gpt" not in st.session_state:
+        st.session_state.use_gpt = False
+    use_gpt = st.checkbox("🧠 Enable GPT-4 Classification", value=st.session_state.use_gpt)
 
     with st.spinner("Processing logs..."):
         df = parse_logs(logs)
